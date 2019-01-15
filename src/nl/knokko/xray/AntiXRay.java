@@ -1,19 +1,19 @@
 package nl.knokko.xray;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.UUID;
 import java.util.logging.Level;
 
@@ -49,9 +49,53 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 	private static final String KEY_UNLOAD_TIME = "seconds_before_unloading_chunk_data";
 	private static final String KEY_RESTORE_PER_TICK = "chunks_to_restore_per_tick";
 	
+	// Copied from BitHelper because I don't really use enough to add it as dependency
+	
+	private static byte[] readFile(File file) throws IOException {
+		if (file.length() > 2000000000)
+			throw new IOException("File too large (" + file.length() + ")");
+		int length = (int) file.length();
+		byte[] bytes = new byte[length];
+		InputStream input = Files.newInputStream(file.toPath());
+		int index = 0;
+		while (index < length) {
+			int read = input.read(bytes, index, length - index);
+			if (read != -1) {
+				index += read;
+			} else {
+				input.close();
+				throw new IOException("End of file was reached before expected");
+			}
+		}
+		input.close();
+		return bytes;
+	}
+	
+	private static byte int3(int x) {
+		return (byte) (x >> 24);
+	}
+
+	private static byte int2(int x) {
+		return (byte) (x >> 16);
+	}
+
+	private static byte int1(int x) {
+		return (byte) (x >> 8);
+	}
+
+	private static byte int0(int x) {
+		return (byte) (x);
+	}
+	
+	private static int makeInt(byte b0, byte b1, byte b2, byte b3) {
+		return (((b3) << 24) | ((b2 & 0xff) << 16) | ((b1 & 0xff) << 8) | ((b0 & 0xff)));
+	}
+	
+	// End of copy from BitHelper
+	
 	private long expireNanoTime = 10000000000L;
 	
-	private Map<ChunkLocation,ChunkData> data = new TreeMap<ChunkLocation,ChunkData>();
+	private Map<ChunkLocation,ChunkData> data = new HashMap<ChunkLocation,ChunkData>(10000);
 	private Map<UUID,Set<CoordPair>> processedChunks;
 	
 	private long totalCheckTime;
@@ -102,12 +146,12 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 		super.onEnable();
 		loadConfig();
 		try {
-			byte[] chunkData = read(new File(getDataFolder() + File.separator + "created chunks.set"));
+			byte[] chunkData = readFile(new File(getDataFolder() + File.separator + "created chunks.set"));
 			ByteBuffer buffer = ByteBuffer.wrap(chunkData);
 			processedChunks = new HashMap<UUID,Set<CoordPair>>();
 			int size = buffer.getInt();
 			for(int i = 0; i < size; i++){
-				Set<CoordPair> set = new TreeSet<CoordPair>();
+				Set<CoordPair> set = new HashSet<CoordPair>();
 				UUID worldID = new UUID(buffer.getLong(), buffer.getLong());
 				int amount = buffer.getInt();
 				for(int j = 0; j < amount; j++)
@@ -153,7 +197,7 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 		}
 		data.clear();
 		try {
-			FileOutputStream output = new FileOutputStream(new File(getDataFolder() + File.separator + "created chunks.set"));
+			OutputStream output = Files.newOutputStream(new File(getDataFolder() + File.separator + "created chunks.set").toPath());
 			Iterator<Entry<UUID,Set<CoordPair>>> iter = processedChunks.entrySet().iterator();
 			output.write(ByteBuffer.allocate(4).putInt(processedChunks.size()).array());
 			while(iter.hasNext()){
@@ -303,8 +347,9 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 	
 	private void onBlockRemove(Block block){
 		long startTime = System.nanoTime();
-		if(block.getY() > 128 || block.getWorld().getEnvironment() != Environment.NORMAL)
-			return;
+		// TODO add proper checks to check the world and height based on config
+		//if(block.getY() > 128 || block.getWorld().getEnvironment() != Environment.NORMAL)
+			//return;
 		ChunkData cd = getChunkData(block.getChunk());
 		if(cd != null){
 			cd.lastUsed = System.nanoTime();
@@ -373,7 +418,8 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 		int minX = hasWest ? 0 : 1;
 		int minZ = hasNorth ? 0 : 1;
 		for(int cx = minX; cx < boundX; cx++){
-			for(int cy = 1; cy < 64; cy++){
+			// TODO define max y in config
+			for(int cy = 1; cy < 256; cy++){
 				for(int cz = minZ; cz < boundZ; cz++){
 					Block block = chunk.getWorld().getBlockAt(cx + chunk.getX() * 16, cy, cz + chunk.getZ() * 16);
 					Material type = block.getType();
@@ -388,7 +434,7 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 			data.put(new ChunkLocation(chunk), new ChunkData(ores));
 		Set<CoordPair> set = processedChunks.get(chunk.getWorld().getUID());
 		if(set == null){
-			set = new TreeSet<CoordPair>();
+			set = new HashSet<CoordPair>();
 			processedChunks.put(chunk.getWorld().getUID(), set);
 		}
 		set.add(new CoordPair(chunk.getX(), chunk.getZ()));
@@ -471,7 +517,7 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 	private void saveChunkData(ChunkLocation chunk, ChunkData cd){
 		try {
 			byte[] data = cd.save(chunk);
-			FileOutputStream output = new FileOutputStream(getChunkFile(chunk));
+			OutputStream output = Files.newOutputStream(getChunkFile(chunk).toPath());
 			output.write(data);
 			output.close();
 		} catch(IOException ex){
@@ -479,22 +525,12 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 		}
 	}
 	
-	private byte[] read(File file) throws IOException {
-		if(file.length() > Integer.MAX_VALUE)
-			throw new IllegalArgumentException("File is too large: (" + file + ") (" + file.length() + ")");
-		byte[] data = new byte[(int) file.length()];
-		FileInputStream input = new FileInputStream(file);
-		input.read(data);
-		input.close();
-		return data;
-	}
-	
 	private ChunkData loadChunkData(Chunk chunk){
 		File file = getChunkFile(chunk);
 		if(!file.exists())
 			return null;
 		try {
-			byte[] bytes = read(file);
+			byte[] bytes = readFile(file);
 			return new ChunkData(chunk.getX(), chunk.getZ(), bytes);
 		} catch(IOException ex){
 			System.out.println("Couldn't load data of chunk(" + chunk.getX() + "," + chunk.getZ() + "): " + ex.getLocalizedMessage() + "; Processing chunk...");
@@ -508,7 +544,7 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 		if(!file.exists())
 			return null;
 		try {
-			byte[] bytes = read(file);
+			byte[] bytes = readFile(file);
 			return new ChunkData(x, z, bytes);
 		} catch(IOException ex){
 			System.out.println("Couldn't load data of chunk(" + x + "," + z + "): " + ex.getLocalizedMessage());
@@ -565,6 +601,11 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 		}
 		
 		@Override
+		public int hashCode() {
+			return 1000000 * z + x * id.hashCode();
+		}
+		
+		@Override
 		public boolean equals(Object other){
 			if(other instanceof ChunkLocation){
 				ChunkLocation cl = (ChunkLocation) other;
@@ -613,6 +654,11 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 			}
 			return false;
 		}
+		
+		@Override
+		public int hashCode() {
+			return x + 1000000 * z;
+		}
 
 		public int compareTo(CoordPair cp) {
 			if(cp.x > x)
@@ -636,10 +682,6 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 		private static final byte ID_LAPIS = 4;
 		private static final byte ID_IRON = 5;
 		private static final byte ID_COAL = 6;
-		
-		private static final byte BIT_XZ = 4;
-		private static final byte BIT_Y = 7;
-		private static final byte BIT_MATERIAL = 3;
 		
 		private static final int CHUNK_SIZE = 16;
 		
@@ -684,27 +726,31 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 		}
 		
 		private ChunkData(int chunkX, int chunkZ, byte[] bytes){
-			BitBuffer buffer = new BitBuffer(bytes);
-			int size = buffer.readInt();
+			int size = makeInt(bytes[0], bytes[1], bytes[2], bytes[3]);
 			blocks = new ArrayList<HiddenBlock>(size);
+			int byteIndex = 4;
 			for(int index = 0; index < size; index++){
-				blocks.add(new HiddenBlock((int) (chunkX * CHUNK_SIZE + buffer.readNumber(BIT_XZ, false)),
-						(int) buffer.readNumber(BIT_Y, false),
-						(int) (chunkZ * CHUNK_SIZE + buffer.readNumber(BIT_XZ, false)),
-						materialForId((byte) buffer.readNumber(BIT_MATERIAL, false))));
+				int coordXZ = bytes[byteIndex++] & 0xFF;
+				blocks.add(new HiddenBlock(chunkX * CHUNK_SIZE + coordXZ / CHUNK_SIZE, bytes[byteIndex++] & 0xFF,
+						chunkZ * CHUNK_SIZE + coordXZ % CHUNK_SIZE, materialForId(bytes[byteIndex++])));
 			}
 		}
 		
 		private byte[] save(ChunkLocation chunk){
-			BitBuffer buffer = new BitBuffer(32 + blocks.size() * 17);
-			buffer.addInt(blocks.size());
+			byte[] bytes = new byte[4 + 3 * blocks.size()];
+			bytes[0] = int0(blocks.size());
+			bytes[1] = int1(blocks.size());
+			bytes[2] = int2(blocks.size());
+			bytes[3] = int3(blocks.size());
+			int byteIndex = 4;
 			for(HiddenBlock hb : blocks){
-				buffer.addNumber(hb.x - chunk.x * CHUNK_SIZE, BIT_XZ, false);
-				buffer.addNumber(hb.y, BIT_Y, false);
-				buffer.addNumber(hb.z - chunk.z * CHUNK_SIZE, BIT_XZ, false);
-				buffer.addNumber(idForMaterial(hb.type), BIT_MATERIAL, false);
+				int coordX = hb.x - chunk.x * CHUNK_SIZE;
+				int coordZ = hb.z - chunk.z * CHUNK_SIZE;
+				bytes[byteIndex++] = (byte) (coordZ + CHUNK_SIZE * coordX);
+				bytes[byteIndex++] = (byte) hb.y;
+				bytes[byteIndex++] = idForMaterial(hb.type);
 			}
-			return buffer.toBytes();
+			return bytes;
 		}
 	}
 	
@@ -786,7 +832,7 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 					int x = Integer.parseInt(name.substring(0, index));
 					int z = Integer.parseInt(name.substring(index + 1));
 					Chunk chunk = currentWorld.getChunkAt(x, z);
-					ChunkData data = new ChunkData(x, z, read(chunkFile));
+					ChunkData data = new ChunkData(x, z, readFile(chunkFile));
 					for(HiddenBlock hb : data.blocks)
 						chunk.getBlock(hb.x - x * ChunkData.CHUNK_SIZE, hb.y, hb.z - z * ChunkData.CHUNK_SIZE).setType(hb.type);
 					chunkFile.delete();
