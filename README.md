@@ -10,3 +10,5 @@ Upon world generation, all ores that are not exposed to air (and some other half
 the file system of the server. When a block next to a 'hidden' ore is broken, it will be placed back in the world.
 This is generally good for performance because there is no need for expensive packet filtering. Also, cave mining will be preserved
 since ores next to air will remain where they are.
+
+This plug-in is not released because it is not finished. There are some things I really want to improve before releasing it, for instance decreasing disk space and deciding which events to use for the ore wipes.
