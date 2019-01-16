@@ -1,9 +1,9 @@
 name: AntiX-Ray
-main: nl.knokko.xray.AntiXRay
-version: 0.1
+main: nl.knokko.antixray.plugin.AntiXRayPlugin
+version: 0.2
 load: startup
 commands:
   antixray:
     description: The x-ray test command.
     aliases: [x,axr,xray,xr,antix]
-    useage: /test [arguments]
+    usage: /x [arguments]

@@ -1,4 +1,4 @@
-package nl.knokko.xray;
+package nl.knokko.antixray;
 
 import java.io.File;
 import java.io.IOException;
@@ -51,7 +51,7 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 	
 	// Copied from BitHelper because I don't really use enough to add it as dependency
 	
-	private static byte[] readFile(File file) throws IOException {
+	public static byte[] readFile(File file) throws IOException {
 		if (file.length() > 2000000000)
 			throw new IOException("File too large (" + file.length() + ")");
 		int length = (int) file.length();
@@ -71,23 +71,23 @@ public class AntiXRay extends JavaPlugin implements Listener, CommandExecutor {
 		return bytes;
 	}
 	
-	private static byte int3(int x) {
+	public static byte int3(int x) {
 		return (byte) (x >> 24);
 	}
 
-	private static byte int2(int x) {
+	public static byte int2(int x) {
 		return (byte) (x >> 16);
 	}
 
-	private static byte int1(int x) {
+	public static byte int1(int x) {
 		return (byte) (x >> 8);
 	}
 
-	private static byte int0(int x) {
+	public static byte int0(int x) {
 		return (byte) (x);
 	}
 	
-	private static int makeInt(byte b0, byte b1, byte b2, byte b3) {
+	public static int makeInt(byte b0, byte b1, byte b2, byte b3) {
 		return (((b3) << 24) | ((b2 & 0xff) << 16) | ((b1 & 0xff) << 8) | ((b0 & 0xff)));
 	}
 	
