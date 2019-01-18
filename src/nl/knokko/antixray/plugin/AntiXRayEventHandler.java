@@ -7,7 +7,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.World.Environment;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.craftbukkit.libs.it.unimi.dsi.fastutil.bytes.ByteArrayList;
@@ -25,6 +24,8 @@ import org.bukkit.event.world.ChunkPopulateEvent;
 import nl.knokko.antixray.chunk.data.ChunkData;
 import nl.knokko.antixray.chunk.data.HiddenBlock;
 import nl.knokko.antixray.chunk.sections.WorldDataManager;
+import nl.knokko.antixray.settings.State;
+import nl.knokko.antixray.settings.WorldState;
 
 public class AntiXRayEventHandler implements Listener {
 
@@ -33,10 +34,10 @@ public class AntiXRayEventHandler implements Listener {
 
 	@EventHandler
 	public void onChunkLoad(final ChunkLoadEvent event) {
-		WorldDataManager manager = AntiXRayPlugin.getInstance().getWorldDataManager();
+		AntiXRayPlugin plug = AntiXRayPlugin.getInstance();
+		WorldDataManager manager = plug.getWorldDataManager();
 
-		// TODO check if this world needs x-ray protection
-		if (event.getWorld().getEnvironment() == Environment.NORMAL && !manager.hasChunkData(event.getChunk()))
+		if (plug.getWorldState(event.getWorld()).getState() == State.ACTIVE && !manager.hasChunkData(event.getChunk()))
 			Bukkit.getScheduler().scheduleSyncDelayedTask(AntiXRayPlugin.getInstance(), new Runnable() {
 
 				public void run() {
@@ -51,18 +52,12 @@ public class AntiXRayEventHandler implements Listener {
 	}
 
 	private void safeProcess(Chunk chunk) {
-		// TODO add restore function
-		// if(isRestoring)
-		// return;
 		World world = chunk.getWorld();
-		// TODO check if this world needs protection
-		// if(world.getEnvironment() != Environment.NORMAL)
-		// return;
 		int chunkX = chunk.getX();
 		int chunkZ = chunk.getZ();
 		int x = chunkX * 16;
 		int z = chunkZ * 16;
-		
+
 		WorldDataManager manager = AntiXRayPlugin.getInstance().getWorldDataManager();
 		ChunkData cdNorth = manager.getChunkData(world, x, z - 16);
 		ChunkData cdNorthEast = manager.getChunkData(world, x + 16, z - 16);
@@ -80,9 +75,7 @@ public class AntiXRayEventHandler implements Listener {
 		boolean southEast = cdSouthEast != null;
 		boolean southWest = cdSouthWest != null;
 		boolean northWest = cdNorthWest != null;
-		
-		//ChunkData currentChunkData = manager.getChunkData(world, x, z);
-		
+
 		processChunk(chunk, null, north, east, south, west);
 		processIfCan(cdEast, world, chunkX + 1, chunkZ, northEast, false, southEast, true);
 		processIfCan(cdSouth, world, chunkX, chunkZ + 1, true, southEast, false, southWest);
@@ -94,8 +87,8 @@ public class AntiXRayEventHandler implements Listener {
 		processIfCan(cdNorthWest, world, chunkX - 1, chunkZ - 1, false, north, west, false);
 	}
 
-	private void processIfCan(ChunkData cd, World world, int chunkX, int chunkZ, boolean north, boolean east, boolean south,
-			boolean west) {
+	private void processIfCan(ChunkData cd, World world, int chunkX, int chunkZ, boolean north, boolean east,
+			boolean south, boolean west) {
 		if (cd != null) {
 			processChunk(world.getChunkAt(chunkX, chunkZ), cd, north, east, south, west);
 		}
@@ -114,25 +107,30 @@ public class AntiXRayEventHandler implements Listener {
 			// Don't bother checking because this block can't hide anything
 			return;
 		}
-		
+
+		WorldState state = AntiXRayPlugin.getInstance().getWorldState(block.getWorld());
+
+		int blockY = block.getY();
+
+		if (state.getState() != State.ACTIVE || blockY < state.getMinY() - 1 || blockY > state.getMaxY() + 1) {
+			// Not active or out of range
+			return;
+		}
+
 		if (block.getRelative(BlockFace.DOWN).getType() != Material.STONE
 				&& block.getRelative(BlockFace.UP).getType() != Material.STONE
 				&& block.getRelative(BlockFace.NORTH).getType() != Material.STONE
 				&& block.getRelative(BlockFace.SOUTH).getType() != Material.STONE
 				&& block.getRelative(BlockFace.EAST).getType() != Material.STONE
 				&& block.getRelative(BlockFace.WEST).getType() != Material.STONE) {
-			
-			// Only stone blocks could be hidden ores, so there is no block neighbour to hide
+
+			// Only stone blocks could be hidden ores, so there is no block neighbour to
+			// hide
 			return;
 		}
 		long startTime = System.nanoTime();
-		// TODO add proper checks to check the world and height based on config
-		// if(block.getY() > 128 || block.getWorld().getEnvironment() !=
-		// Environment.NORMAL)
-		// return;
 		WorldDataManager manager = AntiXRayPlugin.getInstance().getWorldDataManager();
 		int blockX = block.getX();
-		int blockY = block.getY();
 		int blockZ = block.getZ();
 		List<Chunk> chunkList = new ArrayList<Chunk>(3);
 		chunkList.add(block.getChunk());
@@ -151,7 +149,7 @@ public class AntiXRayEventHandler implements Listener {
 			if (cd != null) {
 				byte[] data = cd.getData();
 				for (int dataIndex = 0; dataIndex < data.length; dataIndex += 3) {
-					
+
 					// The value of -2 marks a hidden block as already restored
 					if (data[dataIndex + 2] != -2) {
 						int y = data[dataIndex + 1] & 0xFF;
@@ -180,59 +178,51 @@ public class AntiXRayEventHandler implements Listener {
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void updateExploded(BlockExplodeEvent event) {
-		// TODO check if not restoring and if world needs protection
-		// if(isRestoring || event.getBlock().getWorld().getEnvironment() !=
-		// Environment.NORMAL)
-		// return;
-		List<Block> blocks = event.blockList();
-		for (Block block : blocks)
-			onBlockRemove(block);
+		if (AntiXRayPlugin.getInstance().getWorldState(event.getBlock().getWorld()).getState() == State.ACTIVE) {
+			List<Block> blocks = event.blockList();
+			for (Block block : blocks) {
+				onBlockRemove(block);
+			}
+		}
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void updateExploded(EntityExplodeEvent event) {
-		// TODO check if not restoring and if world needs protection
-		// if(isRestoring || event.getEntity().getWorld().getEnvironment() !=
-		// Environment.NORMAL)
-		// return;
-		List<Block> blocks = event.blockList();
-		for (Block block : blocks)
-			onBlockRemove(block);
+		if (AntiXRayPlugin.getInstance().getWorldState(event.getEntity().getWorld()).getState() == State.ACTIVE) {
+			List<Block> blocks = event.blockList();
+			for (Block block : blocks)
+				onBlockRemove(block);
+		}
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void checkPiston(BlockPistonExtendEvent event) {
-		// TODO check if not restoring and if world needs protection
-		// if(isRestoring || event.getBlock().getWorld().getEnvironment() !=
-		// Environment.NORMAL)
-		// return;
-		List<Block> blocks = event.getBlocks();
-		for (Block block : blocks)
-			onBlockRemove(block);
+		if (AntiXRayPlugin.getInstance().getWorldState(event.getBlock().getWorld()).getState() == State.ACTIVE) {
+			List<Block> blocks = event.getBlocks();
+			for (Block block : blocks)
+				onBlockRemove(block);
+		}
 	}
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void checkPiston(BlockPistonRetractEvent event) {
-		// TODO check if not restoring and if world needs protection
-		// if(isRestoring || event.getBlock().getWorld().getEnvironment() !=
-		// Environment.NORMAL)
-		// return;
-		List<Block> blocks = event.getBlocks();
-		for (Block block : blocks)
-			onBlockRemove(block);
+		if (AntiXRayPlugin.getInstance().getWorldState(event.getBlock().getWorld()).getState() == State.ACTIVE) {
+			List<Block> blocks = event.getBlocks();
+			for (Block block : blocks)
+				onBlockRemove(block);
+		}
 	}
 
-	public static void processChunk(Chunk chunk, ChunkData current, boolean hasNorth, boolean hasEast, boolean hasSouth,
+	private void processChunk(Chunk chunk, ChunkData current, boolean hasNorth, boolean hasEast, boolean hasSouth,
 			boolean hasWest) {
-		//System.out.println("process chunk (" + chunk.getX() + "," + chunk.getZ() + ")");
 		int boundX = hasEast ? 16 : 15;
 		int boundZ = hasSouth ? 16 : 15;
 		int minX = hasWest ? 0 : 1;
 		int minZ = hasNorth ? 0 : 1;
+		WorldState state = AntiXRayPlugin.getInstance().getWorldState(chunk.getWorld());
 		ByteArrayList newData = new ByteArrayList(700);
 		for (int cx = minX; cx < boundX; cx++) {
-			// TODO define max y in config
-			for (int cy = 1; cy < 256; cy++) {
+			for (int cy = state.getMinY(); cy <= state.getMaxY(); cy++) {
 				for (int cz = minZ; cz < boundZ; cz++) {
 					Block block = chunk.getWorld().getBlockAt(cx + chunk.getX() * 16, cy, cz + chunk.getZ() * 16);
 					Material type = block.getType();
